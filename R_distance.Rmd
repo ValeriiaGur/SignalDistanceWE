@@ -1,0 +1,155 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(devtools)
+remove.packages('earthmovdist')
+install_github('ValeriiaGur/earthmovdist', force=TRUE)
+
+```
+```{r}
+library(parallel)
+library(MASS)
+library(foreach)
+library(doParallel)
+library(arrow)
+library(comprehenr)
+library(rlist)
+library(earthmovdist)
+```
+
+
+```{r}
+"+" = function(x,y) {
+    if(is.character(x) || is.character(y)) {
+        return(paste(x , y, sep=""))
+    } else {
+        .Primitive("+")(x,y)
+    }
+}
+```
+
+
+
+```{r}
+
+get_scalograms <- function(df, column_name, matrix_num_rows, matrix_num_columns){
+    df_scalograms = df$GetColumnByName(column_name)$as_vector()
+    len_df = nrow(df)
+    df_scalograms <- array(unlist(df_scalograms), dim=c(matrix_num_columns, matrix_num_rows, len_df))
+
+    df_matrices <- list(t(matrix(df_scalograms[, ,1], matrix_num_columns)))
+    for (i in 2:len_df){
+        df_matrices[[i]] = t(matrix(df_scalograms[, ,i], matrix_num_columns))
+    }
+    return (df_matrices)
+}
+```
+```{r}
+get_emd_distances <- function(query_df, index_df, cur_alpha){
+   len_query = length(query_df)
+   len_index = length(index_df)
+   print(len_query)
+   print(len_index)
+   distances = matrix(0, len_query, len_index)
+   pb   <- txtProgressBar(1, len_query, style=3)
+   registerDoParallel(10)
+   for (i in 1:len_query){
+       r1 <- foreach(j=1:len_index, .combine=c) %dopar%{
+       emdL1(query_df[[i]], index_df[[j]], alpha = cur_alpha)[['dist']]
+       }
+       for (j in 1:len_index){
+           distances[i,j] <- r1[j]
+       }
+       setTxtProgressBar(pb, i)
+   }
+   return (distances)
+}
+
+```
+
+
+
+
+
+```{r}
+get_distances <- function(train, test, val, matrix_shape,  name_test, name_val, alpha) {
+    train_scalograms = get_scalograms(train, 'scalogram', matrix_shape[1], matrix_shape[2])
+    test_scalograms = get_scalograms(test, 'scalogram', matrix_shape[1], matrix_shape[2])
+    val_scalograms = get_scalograms(val, 'scalogram', matrix_shape[1], matrix_shape[2])
+    test_distances = get_emd_distances(test_scalograms, train_scalograms, cur_alpha=alpha)
+    val_distances = get_emd_distances(val_scalograms, train_scalograms, cur_alpha=alpha)
+    write.csv(test_distances, '/Users/valeria.guryanova/SignalDistance/DistanceData/' + name_test + "_" + toString(alpha) +"_"+ "dist" +".csv")
+    write.csv(val_distances, '/Users/valeria.guryanova/SignalDistance/DistanceData/' + name_val + "_" + toString(alpha) +"_"+ "dist" +".csv")
+}
+```
+
+```{r}
+get_distances_test <- function(train, test,  matrix_shape,  name_test,  alpha) {
+    train_scalograms = get_scalograms(train, 'scalogram', matrix_shape[1], matrix_shape[2])
+    test_scalograms = get_scalograms(test, 'scalogram', matrix_shape[1], matrix_shape[2])
+    test_distances = get_emd_distances(test_scalograms, train_scalograms, cur_alpha=alpha)
+    write.csv(test_distances, '/Users/valeria.guryanova/SignalDistance/DistanceData/' + name_test + "_" + toString(alpha) +"_"+ "dist" +".csv")
+}
+```
+
+
+
+
+
+
+```{r}
+maxlen = 512
+random_state = 11
+train_size = 0.15
+test_size = 0.3
+val_size = 0.3
+levels = 9
+filter_type = "bior6.8"
+l1  = 0
+l2 = 7
+decrease_rate = 2
+
+n = as.integer(maxlen / (2 ** levels)) + 1
+matrix_shape = c(l2-l1, (2**levels))
+print(matrix_shape)
+name <- toString(maxlen) +"_" + filter_type + "_" + toString(levels) + "_"  + toString(l1) + "_" + toString(l2) + "_" +  toString(random_state) 
+name<- name + "_" + toString(matrix_shape[1]) + "_" + toString(matrix_shape[2])   + "_" + toString(train_size)
+name_train = "train" + "_" + name 
+name_test = "test" + "_" + name
+name_val = "val" + "_" + name
+if (random_state != "full"){
+    name_train =  name_train 
+    name_test = name_test + "_" + toString(test_size)
+    name_val = name_val +  "_" + toString(val_size)
+}
+print(name_train)   
+train <-read_parquet("/Users/valeria.guryanova/SignalDistance/DistanceData/" + name_train + ".p", as_data_frame=FALSE)
+test <- read_parquet("/Users/valeria.guryanova/SignalDistance/DistanceData/" + name_test + ".p", as_data_frame=FALSE)
+val <- read_parquet("/Users/valeria.guryanova/SignalDistance/DistanceData/" + name_val + ".p", as_data_frame=FALSE)
+#get_distances(train, test, val, matrix_shape, name_test, name_val, 1.0)
+get_distances(train, test, val, matrix_shape, name_test, name_val, 0.8)
+get_distances(train, test, val, matrix_shape, name_test, name_val, 0.07)
+get_distances(train, test, val, matrix_shape, name_test, name_val, 0.03)
+get_distances(train, test, val, matrix_shape, name_test, name_val, 0.5)
+#get_distances(train, test, val, matrix_shape, name_test, name_val, 0.2)
+#get_distances(train, test, val, matrix_shape, name_test, name_val, 0.1)
+```
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
